@@ -852,6 +852,16 @@ const DISP_CLASS = {
   'Disruption':      'disp-disrupt'
 };
 
+// Escape dynamic strings before interpolating into HTML (text or attribute values).
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ── Build faction dropdown (reference table) ───────────────────────────────
 const factions = [...new Set(DATA.map(d => d[0]))].sort();
 const factionSel = document.getElementById('factionFilter');
@@ -1017,26 +1027,38 @@ function updateSlotFaction(idx, faction) {
   teamSlots[idx].faction    = faction;
   teamSlots[idx].detachments = new Set();
   teamSlots[idx].claimed    = '';
+  openDropdownIdx = null;
   renderTeam();
 }
 
-function toggleDetachment(idx, det, checked) {
+// Toggle by the detachment's index within the slot faction's detachment list, so
+// no name string is ever interpolated into an inline handler attribute.
+function toggleDetachmentByIndex(idx, di, checked) {
+  const slot = teamSlots[idx];
+  const factionDets = DATA.filter(d => d[0] === slot.faction);
+  const row = factionDets[di];
+  if (!row) return;
+  const det = row[1];
   if (checked) {
-    teamSlots[idx].detachments.add(det);
+    slot.detachments.add(det);
   } else {
-    teamSlots[idx].detachments.delete(det);
+    slot.detachments.delete(det);
   }
   // Clear claim if no longer eligible
-  const eligible = getSlotEligible(teamSlots[idx]);
-  if (teamSlots[idx].claimed && !eligible.has(teamSlots[idx].claimed)) {
-    teamSlots[idx].claimed = '';
+  const eligible = getSlotEligible(slot);
+  if (slot.claimed && !eligible.has(slot.claimed)) {
+    slot.claimed = '';
   }
   renderTeam();
 }
+
+// Which slot's detachment dropdown is open (so it survives a re-render). null = none.
+let openDropdownIdx = null;
 
 // Close all detachment dropdowns when clicking outside
 document.addEventListener('click', () => {
   document.querySelectorAll('.det-dropdown').forEach(d => d.style.display = 'none');
+  openDropdownIdx = null;
 });
 
 function toggleDetDropdown(event, idx) {
@@ -1045,7 +1067,12 @@ function toggleDetDropdown(event, idx) {
   if (!drop) return;
   const isOpen = drop.style.display === 'block';
   document.querySelectorAll('.det-dropdown').forEach(d => d.style.display = 'none');
-  if (!isOpen) drop.style.display = 'block';
+  if (!isOpen) {
+    drop.style.display = 'block';
+    openDropdownIdx = idx;
+  } else {
+    openDropdownIdx = null;
+  }
 }
 
 function updateSlotClaimed(idx, disp) {
@@ -1059,6 +1086,7 @@ function updateSlotName(idx, val) {
 
 function clearSlot(idx) {
   teamSlots[idx] = { name: `Player ${idx + 1}`, faction: '', detachments: new Set(), claimed: '' };
+  if (openDropdownIdx === idx) openDropdownIdx = null;
   renderTeam();
 }
 
@@ -1075,7 +1103,7 @@ function renderTeam() {
         const takenElsewhere  = usedFactions.has(f) && f !== slot.faction;
         const groupBlocked    = blocked.has(f) && f !== slot.faction;
         const unavailable     = takenElsewhere || groupBlocked;
-        return `<option value="${f}"${slot.faction === f ? ' selected' : ''}${unavailable ? ' disabled' : ''}>${unavailable ? '✗ ' : ''}${f}</option>`;
+        return `<option value="${escapeHtml(f)}"${slot.faction === f ? ' selected' : ''}${unavailable ? ' disabled' : ''}>${unavailable ? '✗ ' : ''}${escapeHtml(f)}</option>`;
       })
     ].join('');
 
@@ -1085,10 +1113,11 @@ function renderTeam() {
     // Detachment picker — chips for selected, dropdown with checkboxes for faction's detachments
     const factionDets = slot.faction ? DATA.filter(d => d[0] === slot.faction) : [];
     const usedDP = getSlotDP(slot);
-    const chips = [...slot.detachments].map(det =>
-      `<span class="det-chip">${det}<span class="det-chip-x"
-        onclick="event.stopPropagation();toggleDetachment(${idx},'${det.replace(/'/g,"\\'")}',false)">×</span></span>`
-    ).join('');
+    const chips = [...slot.detachments].map(det => {
+      const di = factionDets.findIndex(d => d[1] === det);
+      return `<span class="det-chip">${escapeHtml(det)}<span class="det-chip-x"
+        onclick="event.stopPropagation();toggleDetachmentByIndex(${idx},${di},false)">×</span></span>`;
+    }).join('');
     const placeholder = slot.detachments.size === 0
       ? `<span class="det-placeholder">${slot.faction ? '— pick detachments —' : '— select faction first —'}</span>` : '';
     const dpCounter = (slot.faction && usedDP < 3)
@@ -1096,15 +1125,15 @@ function renderTeam() {
     const dots = DISPS.map(d =>
       `<span class="elig-dot ${DISP_CLASS[d]}${eligible.has(d) ? ' active' : ''}" title="${d}"></span>`
     ).join('');
-    const detOptions = factionDets.map(d => {
+    const detOptions = factionDets.map((d, di) => {
       const selected   = slot.detachments.has(d[1]);
       const wouldExceed = !selected && (usedDP + d[3] > 3);
       const dispVar = d[2]==='Take and Hold'?'take':d[2]==='Purge the Foe'?'purge':d[2]==='Reconnaissance'?'recon':d[2]==='Priority Assets'?'priority':'disruption';
       return `<label class="det-option${wouldExceed ? ' det-option-disabled' : ''}" onclick="event.stopPropagation()">
         <input type="checkbox" ${selected ? 'checked' : ''} ${wouldExceed ? 'disabled' : ''}
-          onchange="toggleDetachment(${idx},'${d[1].replace(/'/g,"\\'")}',this.checked)">
-        ${d[1]} <span class="det-dp-cost">${d[3]} DP</span>
-        <span class="det-option-disp" style="background:var(--${dispVar})" title="${d[2]}"></span>
+          onchange="toggleDetachmentByIndex(${idx},${di},this.checked)">
+        ${escapeHtml(d[1])} <span class="det-dp-cost">${d[3]} DP</span>
+        <span class="det-option-disp" style="background:var(--${dispVar})" title="${escapeHtml(d[2])}"></span>
       </label>`;
     }).join('');
     const dpFull = usedDP >= 3;
@@ -1136,7 +1165,7 @@ function renderTeam() {
     );
 
     return `<tr${conflict ? ' class="slot-conflict"' : ''}>
-      <td><input class="player-input" value="${slot.name}"
+      <td><input class="player-input" value="${escapeHtml(slot.name)}"
         oninput="updateSlotName(${idx},this.value)"></td>
       <td>
         <select class="slot-select" onchange="updateSlotFaction(${idx},this.value)">
@@ -1154,6 +1183,13 @@ function renderTeam() {
       <td><button class="clear-btn" onclick="clearSlot(${idx})" title="Clear slot">×</button></td>
     </tr>`;
   }).join('');
+
+  // Keep the active detachment dropdown open across the re-render so multiple
+  // detachments can be picked without reopening it each time.
+  if (openDropdownIdx !== null) {
+    const drop = document.getElementById(`det-drop-${openDropdownIdx}`);
+    if (drop) drop.style.display = 'block';
+  }
 
   renderCoverage(usedDispositions);
   // Sync reference table — claimed factions/dispositions are excluded
