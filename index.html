@@ -466,6 +466,74 @@
   }
   .cov-complete { color: #6fd49a; }
   .cov-missing  { color: #f5a553; }
+
+  /* ── Mobile (≤640px) ─────────────────────────────────────────────────────── */
+  @media (max-width: 640px) {
+    html, body { overflow-x: hidden; }
+
+    header { padding: 14px 14px 12px; }
+    header h1 { font-size: 1.2rem; }
+
+    .controls { padding: 12px 14px; gap: 10px; }
+    .control-group { flex: 1 1 100%; }
+    .control-group input[type="text"],
+    .control-group select { width: 100%; min-width: 0; }
+    .disp-pills { width: 100%; }
+
+    .team-panel-header { padding: 10px 14px; }
+    .team-panel-body { padding: 12px 14px 8px; }
+    .table-wrap { padding: 12px 14px; }
+
+    /* Prevent iOS auto-zoom when focusing fields */
+    input[type="text"], select, .player-input, .slot-select { font-size: 16px; }
+
+    /* Team builder: turn each player row into a stacked card.
+       min-width:0 overrides the base `table { min-width }` so cards fit the viewport. */
+    .team-table, .team-table tbody, .team-table tr, .team-table td { display: block; width: 100%; min-width: 0; }
+    .team-table thead { display: none; }
+    .team-table tbody tr {
+      position: relative;
+      border: 1px solid #1f3a60;
+      border-radius: 8px;
+      background: #0c1422;
+      padding: 12px 12px 10px;
+      margin-bottom: 12px;
+    }
+    .team-table td { padding: 0; margin-bottom: 10px; }
+    .team-table td:last-child { margin-bottom: 0; }
+
+    /* Per-field labels (from data-label) */
+    .team-table td[data-label]::before {
+      content: attr(data-label);
+      display: block;
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    /* Player name = card header */
+    .team-table td.td-player { margin-bottom: 12px; padding-right: 40px; }
+    .player-input { font-size: 1rem; font-weight: 600; }
+
+    /* Make every control fill the card width */
+    .slot-select, .claim-select, .det-cell, .det-select { width: 100%; min-width: 0; }
+
+    /* Clear button pinned to the card's top-right corner */
+    .team-table td.td-clear { position: absolute; top: 12px; right: 12px; width: auto; margin: 0; }
+
+    /* Detachment dropdown must stay inside the viewport */
+    .det-dropdown { left: 0; right: 0; min-width: 0; width: 100%; }
+
+    /* Coverage wraps cleanly */
+    .coverage-row { gap: 6px; }
+    .cov-status { margin-left: 0; width: 100%; }
+
+    /* Reference table stays horizontally scrollable but a bit narrower.
+       Scoped to .table-wrap so it doesn't affect the team-builder table. */
+    .table-wrap table { min-width: 520px; }
+  }
 </style>
 </head>
 <body>
@@ -1165,22 +1233,22 @@ function renderTeam() {
     );
 
     return `<tr${conflict ? ' class="slot-conflict"' : ''}>
-      <td><input class="player-input" value="${escapeHtml(slot.name)}"
+      <td class="td-player"><input class="player-input" value="${escapeHtml(slot.name)}"
         oninput="updateSlotName(${idx},this.value)"></td>
-      <td>
+      <td data-label="Faction">
         <select class="slot-select" onchange="updateSlotFaction(${idx},this.value)">
           ${facOpts}
         </select>
       </td>
-      <td>${detCell}</td>
-      <td>
+      <td data-label="Detachments">${detCell}</td>
+      <td data-label="Claims for team">
         <select class="slot-select claim-select"
           onchange="updateSlotClaimed(${idx},this.value)"
           ${eligible.size === 0 ? 'disabled' : ''}>
           ${claimOpts}
         </select>
       </td>
-      <td><button class="clear-btn" onclick="clearSlot(${idx})" title="Clear slot">×</button></td>
+      <td class="td-clear"><button class="clear-btn" onclick="clearSlot(${idx})" title="Clear slot">×</button></td>
     </tr>`;
   }).join('');
 
