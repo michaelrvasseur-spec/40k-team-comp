@@ -232,7 +232,35 @@
   }
   .screenshot-btn:hover { border-color: #7db8f7; color: #7db8f7; }
   .screenshot-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .panel-header-actions { display: flex; gap: 8px; align-items: center; }
+  .panel-header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+
+  .size-toggle {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid #1f3a60;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .size-label {
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    padding: 0 8px;
+  }
+  .size-btn {
+    background: none;
+    border: none;
+    border-left: 1px solid #1f3a60;
+    color: var(--text-dim);
+    padding: 4px 11px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .size-btn:not(.active):hover { color: var(--text); }
+  .size-btn.active { background: var(--priority); color: #fff; }
 
   .team-panel-body {
     padding: 14px 24px 10px;
@@ -591,6 +619,12 @@
   <div class="team-panel-header">
     <span class="panel-title">⚑ Team Composition Builder</span>
     <div class="panel-header-actions">
+      <div class="size-toggle" id="sizeToggle" title="Team size">
+        <span class="size-label">Team</span>
+        <button class="size-btn active" data-size="5" onclick="setTeamSize(5)">5</button>
+        <button class="size-btn" data-size="8" onclick="setTeamSize(8)">8</button>
+      </div>
+      <button class="screenshot-btn" id="copyTextBtn" onclick="copyTeamText()">📋 Copy text</button>
       <button class="screenshot-btn" id="screenshotBtn" onclick="captureTeam()">📷 Screenshot</button>
       <button class="toggle-btn" id="toggleBtn" onclick="togglePanel()">▲ Collapse</button>
     </div>
@@ -990,9 +1024,9 @@ function applyFilters() {
   const faction = document.getElementById('factionFilter').value;
   const dp      = document.getElementById('dpFilter').value;
 
-  // Exclude factions and dispositions already claimed by the team
+  // Exclude factions already claimed, and dispositions that have hit the cap
   const claimedFactions     = getUsedFactions();
-  const claimedDispositions = getUsedDispositions();
+  const claimedDispositions = getMaxedDispositions();
   const groupBlocked        = getBlockedFactions('');
 
   currentRows = DATA.filter(d => {
@@ -1058,12 +1092,19 @@ function updateStats(rows) {
 // ── Team Builder ───────────────────────────────────────────────────────────
 
 // Team state: 5 slots
-const teamSlots = Array.from({length: 5}, (_, i) => ({
+// Team size: 5 (default) or 8. At 8-man, up to 2 slots may claim the same
+// disposition; at 5-man each disposition is unique. Faction rules are unchanged.
+let teamSize = 5;
+function dispCap() { return teamSize >= 8 ? 2 : 1; }
+
+const makeSlot = (i) => ({
   name: `Player ${i + 1}`,
   faction: '',
   detachments: new Set(), // selected detachment names
   claimed: ''             // which disposition they're filling for the team
-}));
+});
+
+let teamSlots = Array.from({length: teamSize}, (_, i) => makeSlot(i));
 
 // Sum DP cost of selected detachments for a slot
 function getSlotDP(slot) {
@@ -1091,7 +1132,24 @@ const EXCLUSIVE_GROUPS = [
 ];
 
 function getUsedFactions() { return new Set(teamSlots.map(s => s.faction).filter(Boolean)); }
-function getUsedDispositions() { return new Set(teamSlots.map(s => s.claimed).filter(Boolean)); }
+
+// How many slots currently claim each disposition (Map of disposition → count).
+function getDispositionCounts() {
+  const counts = new Map(DISPS.map(d => [d, 0]));
+  for (const s of teamSlots) {
+    if (s.claimed) counts.set(s.claimed, (counts.get(s.claimed) || 0) + 1);
+  }
+  return counts;
+}
+
+// Dispositions that have hit the per-disposition cap (no more may be claimed,
+// and their detachments drop out of the reference table).
+function getMaxedDispositions() {
+  const cap = dispCap();
+  const maxed = new Set();
+  for (const [d, n] of getDispositionCounts()) if (n >= cap) maxed.add(d);
+  return maxed;
+}
 
 // Returns the set of factions blocked because they share an exclusive group with an already-chosen faction
 function getBlockedFactions(ownFaction) {
@@ -1176,8 +1234,9 @@ function clearSlot(idx) {
 }
 
 function renderTeam() {
-  const usedFactions     = getUsedFactions();
-  const usedDispositions = getUsedDispositions();
+  const usedFactions = getUsedFactions();
+  const dispCounts   = getDispositionCounts();
+  const cap          = dispCap();
 
   document.getElementById('teamBody').innerHTML = teamSlots.map((slot, idx) => {
 
@@ -1232,10 +1291,11 @@ function renderTeam() {
       </div>
     </div>`;
 
-    // Claimed options — eligible dispositions not taken by another slot
+    // Claimed options — eligible dispositions not already at the cap
+    // (a disposition this slot already claims always stays selectable)
     const validClaims = DISPS.filter(d =>
       eligible.has(d) &&
-      (!usedDispositions.has(d) || d === slot.claimed)
+      ((dispCounts.get(d) || 0) < cap || d === slot.claimed)
     );
     const claimOpts = ['<option value="">— claim —</option>',
       ...validClaims.map(d =>
@@ -1243,10 +1303,10 @@ function renderTeam() {
       )
     ].join('');
 
-    // Conflict: claimed but disposition no longer eligible or taken by another slot
+    // Conflict: claimed but disposition no longer eligible, or over the cap
     const conflict = slot.claimed && (
       !eligible.has(slot.claimed) ||
-      teamSlots.some((s, i) => i !== idx && s.claimed === slot.claimed)
+      (dispCounts.get(slot.claimed) || 0) > cap
     );
 
     return `<tr${conflict ? ' class="slot-conflict"' : ''}>
@@ -1276,24 +1336,127 @@ function renderTeam() {
     if (drop) drop.style.display = 'block';
   }
 
-  renderCoverage(usedDispositions);
+  renderCoverage(dispCounts);
   // Sync reference table — claimed factions/dispositions are excluded
   applyFilters();
 }
 
-function renderCoverage(usedDispositions) {
+function renderCoverage(dispCounts) {
+  const cap = dispCap();
   const pills = DISPS.map(d => {
-    const filled = usedDispositions.has(d);
-    return `<span class="cov-pill ${DISP_CLASS[d]} ${filled ? 'filled' : 'empty'}">${filled ? '✓' : '✗'} ${DISP_SHORT[d]}</span>`;
+    const n = dispCounts.get(d) || 0;
+    const filled = n > 0;
+    // Show ×count when more than one can be claimed (8-man).
+    const label = (cap > 1 && n > 0) ? `${DISP_SHORT[d]} ×${n}` : DISP_SHORT[d];
+    return `<span class="cov-pill ${DISP_CLASS[d]} ${filled ? 'filled' : 'empty'}">${filled ? '✓' : '✗'} ${label}</span>`;
   }).join('');
 
-  const filledCount = usedDispositions.size;
-  const status = filledCount === 5
-    ? '<span class="cov-status cov-complete">✦ All five dispositions covered</span>'
-    : `<span class="cov-status cov-missing">${5 - filledCount} disposition${5 - filledCount > 1 ? 's' : ''} still needed</span>`;
+  // Complete = every player has a claim AND all five dispositions are represented.
+  const unassigned   = teamSlots.filter(s => !s.claimed).length;
+  const typesCovered = [...dispCounts.values()].filter(n => n > 0).length;
+  const missingTypes = DISPS.length - typesCovered;
+
+  let status;
+  if (unassigned === 0 && missingTypes === 0) {
+    status = `<span class="cov-status cov-complete">✦ All ${teamSize} players assigned · all five dispositions covered</span>`;
+  } else {
+    const bits = [];
+    if (unassigned)   bits.push(`${unassigned} player${unassigned > 1 ? 's' : ''} unassigned`);
+    if (missingTypes) bits.push(`${missingTypes} disposition${missingTypes > 1 ? 's' : ''} uncovered`);
+    status = `<span class="cov-status cov-missing">${bits.join(' · ')}</span>`;
+  }
 
   document.getElementById('teamCoverage').innerHTML =
     `<span class="cov-label">Coverage:</span>${pills}${status}`;
+}
+
+// ── Team size toggle (5 / 8) ─────────────────────────────────────────────────
+function setTeamSize(n) {
+  if (n === teamSize) return;
+  if (n > teamSize) {
+    for (let i = teamSize; i < n; i++) teamSlots.push(makeSlot(i));
+    teamSize = n;
+  } else {
+    teamSlots.length = n;        // drop the extra slots
+    teamSize = n;
+    reconcileClaims();           // clear claims that now exceed the lower cap
+  }
+  openDropdownIdx = null;
+  renderSizeToggle();
+  renderTeam();
+}
+
+// After shrinking, keep the first `cap` slots claiming each disposition and
+// clear any beyond that (auto-resolve over-cap claims).
+function reconcileClaims() {
+  const cap = dispCap();
+  const kept = new Map();
+  for (const s of teamSlots) {
+    if (!s.claimed) continue;
+    const c = kept.get(s.claimed) || 0;
+    if (c >= cap) s.claimed = '';
+    else kept.set(s.claimed, c + 1);
+  }
+}
+
+function renderSizeToggle() {
+  document.querySelectorAll('#sizeToggle .size-btn').forEach(b => {
+    b.classList.toggle('active', +b.dataset.size === teamSize);
+  });
+}
+
+// ── Plain-text export (Discord-friendly) ─────────────────────────────────────
+function buildTeamText() {
+  const lines = [`Team Comp — ${teamSize}-man`];
+  teamSlots.forEach((s, i) => {
+    const faction = s.faction || '(no faction)';
+    const dets = [...s.detachments];
+    const detStr = dets.length
+      ? dets.map(d => {
+          const row = DATA.find(r => r[0] === s.faction && r[1] === d);
+          return row ? `${d} (${row[3]} DP)` : d;
+        }).join(', ')
+      : '—';
+    const claim = s.claimed || '—';
+    lines.push(`${i + 1}. ${s.name} — ${faction} · ${detStr} · ${claim}`);
+  });
+  const counts = getDispositionCounts();
+  const cov = DISPS
+    .map(d => { const n = counts.get(d) || 0; return n ? `${DISP_SHORT[d]}${n > 1 ? ' ×' + n : ''}` : null; })
+    .filter(Boolean).join(', ');
+  lines.push(`Coverage: ${cov || '—'}`);
+  return lines.join('\n');
+}
+
+function copyTeamText() {
+  const text = buildTeamText();
+  const btn = document.getElementById('copyTextBtn');
+  const flash = ok => {
+    btn.textContent = ok ? '✓ Copied' : '⚠ Copy failed';
+    setTimeout(() => { btn.textContent = '📋 Copy text'; }, 1600);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => flash(true)).catch(() => fallbackCopy(text, flash));
+  } else {
+    fallbackCopy(text, flash);
+  }
+}
+
+function fallbackCopy(text, flash) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    flash(ok);
+  } catch (e) {
+    flash(false);
+  }
 }
 
 // ── Screenshot ─────────────────────────────────────────────────────────────
@@ -1346,6 +1509,7 @@ function togglePanel() {
 applyFilters();
 // Mark Faction header as default sort
 document.querySelectorAll('#mainTable thead th')[0].classList.add('sorted-asc');
+renderSizeToggle();
 renderTeam();
 </script>
 
